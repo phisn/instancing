@@ -42,7 +42,7 @@ fn setup(
             (1..=10)
                 .flat_map(|x| (1..=10).map(move |y| (x as f32 / 10.0, y as f32 / 10.0)))
                 .map(|(x, y)| InstanceData {
-                    position: Vec3::new(x * 10.0 - 5.0, y * 10.0 - 5.0, -10.0),
+                    position: Vec3::new(x * 10.0 - 5.0, y * 10.0 - 5.0, 0.0),
                     scale: 1.0,
                     color: Color::hsla(x * 360., y, 0.5, 1.0).as_rgba_f32(),
                 })
@@ -151,9 +151,17 @@ fn queue_custom(
             };
             let key =
                 view_key | Mesh2dPipelineKey::from_primitive_topology(mesh.primitive_topology);
+            
             let pipeline = pipelines
-                .specialize(&pipeline_cache, &custom_pipeline, key, &mesh.layout)
-                .unwrap();
+                .specialize(&pipeline_cache, &custom_pipeline, key, &mesh.layout);
+
+            let pipeline = match pipeline {
+                Ok(id) => id,
+                Err(err) => {
+                    error!("{}", err);
+                    continue;
+                }
+            };
 
             let mesh_z = mesh_instance.transforms.transform.translation.z;
 

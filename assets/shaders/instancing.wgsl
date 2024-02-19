@@ -32,10 +32,12 @@ fn vertex(vertex: Vertex) -> VertexOutput {
 
     */
 
+    // mesh_position_local_to_clip
+
     var model = mesh_functions::get_model_matrix(0u);
-    out.clip_position = mesh_functions::mesh2d_position_local_to_world(
+    out.clip_position = mesh_functions::mesh2d_position_local_to_clip(
         model,
-        vec4<f32>(vertex.position, 1.0)
+        vec4<f32>(position, 1.0)
     );
     out.color = vertex.i_color;
     return out;
