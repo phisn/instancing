@@ -8,21 +8,13 @@ use bevy::{
     },
     prelude::*,
     render::{
-        extract_component::{ExtractComponent, ExtractComponentPlugin},
-        mesh::{GpuBufferInfo, MeshVertexBufferLayout},
-        render_asset::RenderAssets,
-        render_phase::{
+        batching::NoAutomaticBatching, extract_component::{ExtractComponent, ExtractComponentPlugin}, mesh::{GpuBufferInfo, MeshVertexBufferLayout}, render_asset::RenderAssets, render_phase::{
             AddRenderCommand, DrawFunctions, PhaseItem, RenderCommand, RenderCommandResult,
             RenderPhase, SetItemPipeline, TrackedRenderPass,
-        },
-        render_resource::*,
-        renderer::RenderDevice,
-        view::{ExtractedView, NoFrustumCulling},
-        Render, RenderApp, RenderSet,
+        }, render_resource::*, renderer::RenderDevice, view::{ExtractedView, NoFrustumCulling}, Render, RenderApp, RenderSet
     },
     sprite::{
-        MaterialMesh2dBundle, Mesh2dPipeline, Mesh2dPipelineKey, RenderMesh2dInstances,
-        SetMesh2dBindGroup, SetMesh2dViewBindGroup,
+        MaterialMesh2dBundle, Mesh2d, Mesh2dHandle, Mesh2dPipeline, Mesh2dPipelineKey, RenderMesh2dInstances, SetMesh2dBindGroup, SetMesh2dViewBindGroup
     },
     utils::FloatOrd,
 };
@@ -41,8 +33,11 @@ fn setup(
     mut materials: ResMut<Assets<ColorMaterial>>,
 ) {
     commands.spawn((
-        meshes.add(Mesh::from(shape::Quad::new(Vec2::new(1.0, 1.0)))),
+        Mesh2dHandle(meshes
+            .add(shape::Quad::new(Vec2::new(2.0, 2.0)).into())),
         SpatialBundle::INHERITED_IDENTITY,
+        NoAutomaticBatching,
+        
         InstanceMaterialData(
             (1..=10)
                 .flat_map(|x| (1..=10).map(move |y| (x as f32 / 10.0, y as f32 / 10.0)))
@@ -79,7 +74,7 @@ fn setup(
         projection: OrthographicProjection {
             far: 1000.,
             near: -1000.,
-            scale: 0.5,
+            scale: 0.08,
             ..Default::default()
         },
         ..default()
@@ -110,8 +105,8 @@ impl Plugin for CustomMaterialPlugin {
             .add_systems(
                 Render,
                 (
-                    queue_custom.in_set(RenderSet::Queue),
-                    prepare_instance_buffers.in_set(RenderSet::PrepareBindGroups),
+                    queue_custom.in_set(RenderSet::QueueMeshes),
+                    prepare_instance_buffers.in_set(RenderSet::PrepareResources),
                 ),
             );
     }
