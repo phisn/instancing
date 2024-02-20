@@ -8,13 +8,22 @@ use bevy::{
     },
     prelude::*,
     render::{
-        batching::NoAutomaticBatching, extract_component::{ExtractComponent, ExtractComponentPlugin}, mesh::{GpuBufferInfo, MeshVertexBufferLayout}, render_asset::RenderAssets, render_phase::{
+        batching::NoAutomaticBatching,
+        extract_component::{ExtractComponent, ExtractComponentPlugin},
+        mesh::{GpuBufferInfo, MeshVertexBufferLayout},
+        render_asset::RenderAssets,
+        render_phase::{
             AddRenderCommand, DrawFunctions, PhaseItem, RenderCommand, RenderCommandResult,
             RenderPhase, SetItemPipeline, TrackedRenderPass,
-        }, render_resource::*, renderer::RenderDevice, view::{ExtractedView, NoFrustumCulling}, Render, RenderApp, RenderSet
+        },
+        render_resource::*,
+        renderer::RenderDevice,
+        view::{ExtractedView, NoFrustumCulling},
+        Render, RenderApp, RenderSet,
     },
     sprite::{
-        MaterialMesh2dBundle, Mesh2d, Mesh2dHandle, Mesh2dPipeline, Mesh2dPipelineKey, RenderMesh2dInstances, SetMesh2dBindGroup, SetMesh2dViewBindGroup
+        MaterialMesh2dBundle, Mesh2d, Mesh2dHandle, Mesh2dPipeline, Mesh2dPipelineKey,
+        RenderMesh2dInstances, SetMesh2dBindGroup, SetMesh2dViewBindGroup,
     },
     utils::FloatOrd,
 };
@@ -27,46 +36,38 @@ fn main() {
         .run();
 }
 
-fn setup(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<ColorMaterial>>,
-) {
-    commands.spawn((
-        Mesh2dHandle(meshes
-            .add(shape::Quad::new(Vec2::new(2.0, 2.0)).into())),
-        SpatialBundle::INHERITED_IDENTITY,
-        NoAutomaticBatching,
-        
-        InstanceMaterialData(
+fn setup(mut commands: Commands, mut meshes: ResMut<Assets<Mesh>>) {
+    commands
+        .spawn((
+            Mesh2dHandle(meshes.add(shape::Quad::new(Vec2::new(1.0, 1.0)).into())),
+            SpatialBundle::INHERITED_IDENTITY,
+            InstancedMaterialHost::default(),
+            // NOTE: Frustum culling is done based on the Aabb of the Mesh and the GlobalTransform.
+            // As the cube is at the origin, if its Aabb moves outside the view frustum, all the
+            // instanced cubes will be culled.
+            // The InstanceMaterialData contains the 'GlobalTransform' information for this custom
+            // instancing, and that is not taken into account with the built-in frustum culling.
+            // We must disable the built-in frustum culling by adding the `NoFrustumCulling` marker
+            // component to avoid incorrect culling.
+            NoFrustumCulling,
+            NoAutomaticBatching,
+        ))
+        .with_children(|parent| {
             (1..=10)
                 .flat_map(|x| (1..=10).map(move |y| (x as f32 / 10.0, y as f32 / 10.0)))
-                .map(|(x, y)| InstanceData {
-                    position: Vec3::new(x * 10.0 - 5.0, y * 10.0 - 5.0, 0.0),
-                    scale: 1.0,
-                    color: Color::hsla(x * 360., y, 0.5, 1.0).as_rgba_f32(),
-                })
-                .collect(),
-        ),
-        // NOTE: Frustum culling is done based on the Aabb of the Mesh and the GlobalTransform.
-        // As the cube is at the origin, if its Aabb moves outside the view frustum, all the
-        // instanced cubes will be culled.
-        // The InstanceMaterialData contains the 'GlobalTransform' information for this custom
-        // instancing, and that is not taken into account with the built-in frustum culling.
-        // We must disable the built-in frustum culling by adding the `NoFrustumCulling` marker
-        // component to avoid incorrect culling.
-        NoFrustumCulling,
-    ));
-
-    // test rectangle, red (non instanced)
-    commands.spawn((MaterialMesh2dBundle {
-        transform: Transform::from_translation(Vec3::new(0.0, 0.0, -10.0)),
-        mesh: meshes
-            .add(Mesh::from(shape::Quad::new(Vec2::new(1.0, 1.0))))
-            .into(),
-        material: materials.add(Color::RED.into()),
-        ..Default::default()
-    },));
+                .for_each(|(x, y)| {
+                    parent.spawn((
+                        InstancedMaterialChild {
+                            color: Color::hsla(x * 360., y, 0.5, 1.0).as_rgba_f32(),
+                            scale: 1.0,
+                        },
+                        TransformBundle::from_transform(Transform {
+                            translation: Vec3::new(x * 10.0 - 5.0, y * 10.0 - 5.0, 0.0),
+                            ..Default::default()
+                        }),
+                    ));
+                });
+        });
 
     // camera
     commands.spawn(Camera2dBundle {
@@ -81,24 +82,24 @@ fn setup(
     });
 }
 
-#[derive(Component, Deref)]
-struct InstanceMaterialData(Vec<InstanceData>);
+#[derive(Component, Default, ExtractComponent, Clone)]
+struct InstancedMaterialHost {
+    pub buffer: Vec<InstanceData>,
+}
 
-impl ExtractComponent for InstanceMaterialData {
-    type Query = &'static InstanceMaterialData;
-    type Filter = ();
-    type Out = Self;
-
-    fn extract_component(item: QueryItem<'_, Self::Query>) -> Option<Self> {
-        Some(InstanceMaterialData(item.0.clone()))
-    }
+#[derive(Component, Clone)]
+struct InstancedMaterialChild {
+    pub color: [f32; 4],
+    pub scale: f32,
 }
 
 pub struct CustomMaterialPlugin;
 
 impl Plugin for CustomMaterialPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(ExtractComponentPlugin::<InstanceMaterialData>::default());
+        app.add_plugins(ExtractComponentPlugin::<InstancedMaterialHost>::default());
+        app.add_systems(Last, prepare_buffer);
+
         app.sub_app_mut(RenderApp)
             .add_render_command::<Transparent2d, DrawCustom>()
             .init_resource::<SpecializedMeshPipelines<CustomPipeline>>()
@@ -113,6 +114,27 @@ impl Plugin for CustomMaterialPlugin {
 
     fn finish(&self, app: &mut App) {
         app.sub_app_mut(RenderApp).init_resource::<CustomPipeline>();
+    }
+}
+
+fn prepare_buffer(
+    mut instanced_materials: Query<(&mut InstancedMaterialHost, &Children)>,
+    instanced_material_children: Query<(&InstancedMaterialChild, &Transform)>,
+) {
+    for (mut instanced_material, children) in &mut instanced_materials {
+        let children = children
+            .iter()
+            .map(|entity| instanced_material_children.get(*entity).unwrap());
+
+        instanced_material.buffer.clear();
+
+        for (child, child_transform) in children {
+            instanced_material.buffer.push(InstanceData {
+                position: child_transform.translation,
+                scale: child.scale,
+                color: child.color,
+            });
+        }
     }
 }
 
@@ -133,7 +155,7 @@ fn queue_custom(
     pipeline_cache: Res<PipelineCache>,
     meshes: Res<RenderAssets<Mesh>>,
     render_mesh_instances: Res<RenderMesh2dInstances>,
-    material_meshes: Query<Entity, With<InstanceMaterialData>>,
+    material_meshes: Query<Entity, With<InstancedMaterialHost>>,
     mut views: Query<(&ExtractedView, &mut RenderPhase<Transparent2d>)>,
 ) {
     let draw_custom = transparent_2d_draw_functions.read().id::<DrawCustom>();
@@ -151,9 +173,9 @@ fn queue_custom(
             };
             let key =
                 view_key | Mesh2dPipelineKey::from_primitive_topology(mesh.primitive_topology);
-            
-            let pipeline = pipelines
-                .specialize(&pipeline_cache, &custom_pipeline, key, &mesh.layout);
+
+            let pipeline =
+                pipelines.specialize(&pipeline_cache, &custom_pipeline, key, &mesh.layout);
 
             let pipeline = match pipeline {
                 Ok(id) => id,
@@ -185,18 +207,19 @@ pub struct InstanceBuffer {
 
 fn prepare_instance_buffers(
     mut commands: Commands,
-    query: Query<(Entity, &InstanceMaterialData)>,
+    query: Query<(Entity, &InstancedMaterialHost)>,
     render_device: Res<RenderDevice>,
 ) {
-    for (entity, instance_data) in &query {
+    for (entity, instances) in &query {
         let buffer = render_device.create_buffer_with_data(&BufferInitDescriptor {
             label: Some("instance data buffer"),
-            contents: bytemuck::cast_slice(instance_data.as_slice()),
+            contents: bytemuck::cast_slice(instances.buffer.as_slice()),
             usage: BufferUsages::VERTEX | BufferUsages::COPY_DST,
         });
+
         commands.entity(entity).insert(InstanceBuffer {
             buffer,
-            length: instance_data.len(),
+            length: instances.buffer.len(),
         });
     }
 }
